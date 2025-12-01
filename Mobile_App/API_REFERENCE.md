@@ -7,7 +7,7 @@ http://localhost:3000
 
 ## Endpoints
 
-### ✅ Health & Status
+## ✅ Health & Status
 
 #### Check Backend Health
 ```
