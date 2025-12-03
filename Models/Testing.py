@@ -6,6 +6,7 @@ import torchaudio
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
+import itertools
 from tqdm import tqdm
 
 # ==========================================
@@ -30,7 +31,7 @@ CONFIG = {
 # ==========================================
 def calculate_metrics(pred_wav, target_wav, threshold_db=-40):
     """
-    Calculates SNR, Accuracy, Precision, Recall, and F1.
+    Calculates SNR, Accuracy, Precision, Recall, F1, and Confusion Matrix components.
     """
     eps = 1e-8
     pred_wav = pred_wav.view(-1)
@@ -60,9 +61,10 @@ def calculate_metrics(pred_wav, target_wav, threshold_db=-40):
     pred_mask = to_binary_mask(pred_wav)
     target_mask = to_binary_mask(target_wav)
 
-    tp = (pred_mask * target_mask).sum()
-    fp = (pred_mask * (1 - target_mask)).sum()
-    fn = ((1 - pred_mask) * target_mask).sum()
+    tp = (pred_mask * target_mask).sum().item()
+    fp = (pred_mask * (1 - target_mask)).sum().item()
+    fn = ((1 - pred_mask) * target_mask).sum().item()
+    tn = ((1 - pred_mask) * (1 - target_mask)).sum().item()
 
     precision = tp / (tp + fp + eps)
     recall = tp / (tp + fn + eps)
@@ -71,9 +73,10 @@ def calculate_metrics(pred_wav, target_wav, threshold_db=-40):
     return {
         "SNR": snr.item(),
         "Accuracy": accuracy,
-        "Precision": precision.item(),
-        "Recall": recall.item(),
-        "F1": f1.item()
+        "Precision": precision,
+        "Recall": recall,
+        "F1": f1,
+        "TP": tp, "FP": fp, "FN": fn, "TN": tn
     }
 
 def save_plots(noisy, denoised, clean, sample_rate, filename, output_dir):
@@ -111,23 +114,53 @@ def save_plots(noisy, denoised, clean, sample_rate, filename, output_dir):
     plt.savefig(save_path)
     plt.close()
 
+def save_confusion_matrix(cm, output_dir, filename="GLOBAL_CONFUSION_MATRIX.png"):
+    """
+    Plots a Confusion Matrix.
+    cm format: [[TN, FP], [FN, TP]]
+    """
+    plt.figure(figsize=(8, 6))
+    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    plt.title("Confusion Matrix (Spectral Classification)")
+    plt.colorbar()
+    
+    classes = ['Noise/Silence', 'Signal']
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+
+    # Normalize for text labels
+    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, f"{cm[i, j]:,}\n({cm_norm[i, j]:.1%})",
+                 horizontalalignment="center",
+                 color="white" if cm[i, j] > thresh else "black")
+
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, filename))
+    plt.close()
+
 def save_summary_graph(avg_metrics, output_dir):
     """Plots the overall F1, Accuracy, etc."""
-    metrics = list(avg_metrics.keys())
-    values = list(avg_metrics.values())
-    
-    # Normalize SNR for visualization if needed, or plot on secondary axis
-    # Here we plot standard 0-1 metrics and handle SNR separately if needed
+    metrics = ['Accuracy', 'Precision', 'Recall', 'F1']
+    values = [avg_metrics[m] for m in metrics]
     
     plt.figure(figsize=(10, 6))
-    bars = plt.bar(metrics, values, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'])
+    bars = plt.bar(metrics, values, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'])
     
     plt.title("Model Evaluation Summary (Average Scores)", fontsize=14)
-    plt.ylim(0, max(values) * 1.2 if max(values) > 0 else 1)
+    plt.ylim(0, 1.1)  # Since these are 0-1 (except Accuracy which is 0-100 usually, handled below)
     
     for bar in bars:
         yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval, f"{yval:.2f}", ha='center', va='bottom', fontsize=12, fontweight='bold')
+        label = f"{yval:.2f}"
+        if yval > 1: # Accuracy case (0-100)
+             label = f"{yval:.1f}%"
+        plt.text(bar.get_x() + bar.get_width()/2, yval, label, ha='center', va='bottom', fontsize=12, fontweight='bold')
     
     plt.grid(axis='y', alpha=0.3)
     plt.savefig(os.path.join(output_dir, "FINAL_METRICS_SUMMARY.png"))
@@ -229,6 +262,9 @@ def denoise_files():
     print(f"Found {len(files)} files to process.")
 
     avg_metrics = {"SNR": 0, "Accuracy": 0, "Precision": 0, "Recall": 0, "F1": 0}
+    # Accumulate confusion matrix counts globally
+    global_cm = {"TP": 0, "FP": 0, "FN": 0, "TN": 0}
+    
     count = 0
 
     for file_path in tqdm(files, desc="Processing & Evaluation"):
@@ -281,8 +317,15 @@ def denoise_files():
         # 4. Metrics & Reporting
         if clean_wav is not None:
             metrics = calculate_metrics(rec_waveform, clean_wav)
-            for k, v in metrics.items():
-                avg_metrics[k] += v
+            for k in avg_metrics:
+                avg_metrics[k] += metrics[k]
+            
+            # Accumulate CM counts
+            global_cm["TP"] += metrics["TP"]
+            global_cm["FP"] += metrics["FP"]
+            global_cm["FN"] += metrics["FN"]
+            global_cm["TN"] += metrics["TN"]
+            
             count += 1
             
             # Save visual report
@@ -304,9 +347,19 @@ def denoise_files():
         for k in avg_metrics:
             avg_metrics[k] /= count
             print(f"{k}: {avg_metrics[k]:.4f}")
-        
+            
+        # Plot Global Summary Graph
         save_summary_graph(avg_metrics, CONFIG['output_folder'])
-        print(f"Summary graphs and individual file reports saved to {CONFIG['output_folder']}")
+        
+        # Plot Global Confusion Matrix
+        # Format: [[TN, FP], [FN, TP]]
+        cm_array = np.array([
+            [global_cm["TN"], global_cm["FP"]], 
+            [global_cm["FN"], global_cm["TP"]]
+        ])
+        save_confusion_matrix(cm_array, CONFIG['output_folder'])
+        
+        print(f"Summary graphs, Confusion Matrix, and individual file reports saved to {CONFIG['output_folder']}")
     else:
         print("Done. No matching clean files found for metrics calculation.")
 
