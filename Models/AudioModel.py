@@ -25,11 +25,11 @@ CONFIG = {
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     
     # USER DATA CONFIGURATION
-    "data_root": r"E:\Test Audio Data\Audio Data",  
+    "data_root": r"E:\Minor-Project-For-Amity-Patna\Models\Audio Data",  
     "noisy_folder": "Noisy Data",                        
     "clean_folder": "Noiseless Data",                    
     "val_split": 0.2,                               
-    "save_path": "best_denoiser_model.pth"
+    "save_path": r"E:\Minor-Project-For-Amity-Patna\Models\best_denoiser_model.pth"
 }
 
 # ==========================================
