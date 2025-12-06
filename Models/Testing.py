@@ -87,7 +87,7 @@ class AudioDenoisingDataset(Dataset):
 
 
 # ==========================================
-# MODEL (same as training)
+# MODEL (same as training, with final_conv restored)
 # ==========================================
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -134,6 +134,7 @@ class AdvancedResUNet(nn.Module):
         self.up1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
         self.dec1 = ResidualBlock(64, 32)
 
+        # IMPORTANT: use same name as in trained model
         self.final_conv = nn.Conv2d(32, 1, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
 
@@ -300,9 +301,12 @@ def test_model():
     recall = tp / max(tp + fn, 1)
     f1 = 2 * precision * recall / max(precision + recall, eps)
 
-    # confusion matrix as 2x2
-    cm = np.array([[tn, fp],
-                   [fn, tp]])
+    # confusion matrix as percentages
+    total_cm = max(total, 1)
+    cm = np.array([
+        [tn / total_cm * 100, fp / total_cm * 100],
+        [fn / total_cm * 100, tp / total_cm * 100]
+    ])
 
     # 6. Print report
     print("\n===== TEST REPORT =====")
@@ -312,29 +316,30 @@ def test_model():
     print(f"Precision: {precision:.4f}")
     print(f"Recall:    {recall:.4f}")
     print(f"F1-score:  {f1:.4f}")
-    print("\nConfusion Matrix (rows=true, cols=pred):")
-    print("          Pred 0    Pred 1")
-    print(f"True 0:   {tn:8d} {fp:8d}")
-    print(f"True 1:   {fn:8d} {tp:8d}")
+    print("\nConfusion Matrix (Percentage %)")
+    print("          Pred 0       Pred 1")
+    print(f"True 0:   {cm[0,0]:8.2f}%   {cm[0,1]:8.2f}%")
+    print(f"True 1:   {cm[1,0]:8.2f}%   {cm[1,1]:8.2f}%")
     print("========================\n")
 
     # 7. PLOTS
     # (A) Confusion matrix heatmap
     fig, ax = plt.subplots()
     im = ax.imshow(cm, interpolation="nearest")
-    ax.set_title("Confusion Matrix")
+    ax.set_title("Confusion Matrix (%)")
     plt.colorbar(im, ax=ax)
     ax.set_xticks([0, 1])
     ax.set_yticks([0, 1])
     ax.set_xticklabels(["Pred 0", "Pred 1"])
     ax.set_yticklabels(["True 0", "True 1"])
 
-    # annotate cells
+    # annotate cells with percentages
     for i in range(2):
         for j in range(2):
             ax.text(
-                j, i, cm[i, j],
-                ha="center", va="center", color="white" if cm[i, j] > cm.max() / 2 else "black"
+                j, i, f"{cm[i, j]:.2f}%",
+                ha="center", va="center",
+                color="white" if cm[i, j] > cm.max() / 2 else "black"
             )
     plt.tight_layout()
 
